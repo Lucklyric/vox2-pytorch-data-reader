@@ -32,22 +32,64 @@ import torch
 import matplotlib.pyplot as plt
 
 
+def power_law(data, power=0.6):
+    # assume input has negative value
+    mask = np.zeros(data.shape)
+    mask[data >= 0] = 1
+    mask[data < 0] = -1
+    data = np.power(np.abs(data), power)
+    data = data * mask
+    return data
+
+
+def stft(data, fft_size=512, step_size=160, padding=True):
+    # short time fourier transform
+    if padding == True:
+        # for 16K sample rate data, 48192-192 = 48000
+        pad = np.zeros(192,)
+        data = np.concatenate((data, pad), axis=0)
+    # padding hanning window 512-400 = 112
+    window = np.concatenate((np.zeros((56,)), np.hanning(fft_size - 112), np.zeros((56,))), axis=0)
+    win_num = (len(data) - fft_size) // step_size
+    out = np.ndarray((win_num, fft_size), dtype=data.dtype)
+    for i in range(win_num):
+        left = int(i * step_size)
+        right = int(left + fft_size)
+        out[i] = data[left:right] * window
+    F = np.fft.rfft(out, axis=1)
+    return F
+
+
+def fast_stft(data, power=False):
+    if power:
+        data = power_law(data)
+    return stft(data)
+
+
 class DataReader(Dataset):
 
-    def __init__(self, csv_meta, audio_prefix, video_prefix, random=False, engine="librosa", mode="train", fake_length=500):
+    def __init__(self, csv_meta, audio_prefix, video_prefix, random=False, engine="librosa", mode="train"):
 
         print("Init DataReader start")
         self.meta_data = pd.read_csv(csv_meta)
         self.meta_data = self.meta_data[self.meta_data["Set"].str.strip() == "dev"]
         self.ids = self.meta_data["VoxCeleb2 ID"].str.strip().values
         self.ids.sort()
-        self.length = fake_length
+        self.mode = mode
+        print(self.ids.shape)
+        if self.mode == "train":
+            self.range = [0, 1000]
+        else:
+            self.range = [1000, 1100]
+        # print(self.range[0],self.range[1])
+
+        self.ids = self.ids[self.range[0]:self.range[1]]
+        self.length = len(self.ids)
         self.audio_prefix = audio_prefix
         self.video_prefix = video_prefix
         self.random = random
         self.dur = int((1 / 25) * 16000)
         self.engine = engine
-        self.mode = mode
 
         print("Init DataReader finished")
 
@@ -56,6 +98,8 @@ class DataReader(Dataset):
         return self.length
 
     def get_single_data(self, idx):
+
+        np.random.seed(int(time.time() * 100000) % 100000)
         speaker_id = self.ids[idx]
 
         # get all video ids of this speaker
@@ -63,11 +107,9 @@ class DataReader(Dataset):
         num_videos = len(all_video_pathes)
 
         pick_video_idx = 0
-        if self.mode == 'train':
+        if self.random is True:
             # pick a random video of this speaker
-            pick_video_idx = np.random.randint(1, num_videos - 1)
-        else:
-            pick_clip_idx = num_videos - 1
+            pick_video_idx = np.random.randint(0, num_videos)
 
         # get all video clips of selected video
         all_audio_clips = glob.glob(all_video_pathes[pick_video_idx] + "/*.m4a")
@@ -87,17 +129,17 @@ class DataReader(Dataset):
         else:
             acc = AudioSegment.from_file(audio_path_acc, "m4a")
             acc.export(audio_path_wav, format='wav')
-        print(audio_path_wav)
+        # print(audio_path_wav)
 
         if self.engine == "librosa":
-            data, fs = librosa.load(audio_path_wav, sr=None)
+            data, fs = librosa.load(audio_path_wav, sr=16000)
             # data = data / np.max(data)
 
         # locate video
         video_id = video_ids[pick_video_idx]
 
         video_path = "%s/%s/%s/%s.mp4" % (self.video_prefix, speaker_id, video_id, audio_path_wav.split('/')[-1].split('.')[0])
-        print(video_path)
+        # print(video_path)
 
         vid = imageio.get_reader(video_path, 'ffmpeg')
 
@@ -120,7 +162,7 @@ class DataReader(Dataset):
 
         dur = self.dur
         raw_data = data[start_idx * dur:(start_idx + 3 * 25 - 1) * dur]
-
+        raw_data = raw_data / np.max(raw_data)
         if len(raw_data) != 47360:
             print(data.shape)
             print(start_idx)
@@ -130,26 +172,35 @@ class DataReader(Dataset):
 
         if self.engine == "librosa":
             # raw_data = self.power_law(raw_data,0.3)
-            Zxx = librosa.core.stft(raw_data.astype(float), hop_length=10 * 16, n_fft=40 * 16)
-            # Zxx = Zxx**0.3
-            Zxx = np.transpose(Zxx, [1, 0])
-            # mag = np.abs(Zxx)
-        return frames_seg, raw_data, np.real(Zxx), np.imag(Zxx)
+            # Zxx = librosa.core.stft(raw_data.astype(float), hop_length=10 * 16, n_fft=512)
+            Zxx = fast_stft(raw_data)
+            Zxx = Zxx**0.3
+            # Zxx = np.transpose(Zxx, [1, 0])
+            # # mag = np.abs(Zxx)
+        return frames_seg, raw_data, np.abs(Zxx)
 
     def __getitem__(self, idx):
         try:
-            frame_s1, raw_data_s1, real_s1, imag_s1 = self.get_single_data(0)
-            frame_s2, raw_data_s2, real_s2, imag_s2 = self.get_single_data(1)
+            if self.random is True:
+                ss = np.random.randint(0, self.length, 2)
+            else:
+                ss = [0, 1]
+            frame_s1, raw_data_s1, mag_s1 = self.get_single_data(ss[0])
+            frame_s2, raw_data_s2, mag_s2 = self.get_single_data(ss[1])
             mix_raw_data = 0.5 * raw_data_s1 + 0.5 * raw_data_s2
-            Zxx = librosa.core.stft(mix_raw_data.astype(float), hop_length=10 * 16, n_fft=40 * 16)
+            # mix_raw_data =  raw_data_s1 +  raw_data_s2
+            # Zxx = librosa.core.stft(mix_raw_data.astype(float), hop_length=10 * 16, n_fft=512)
+            # Zxx = fast_stft(mix_raw_data)
+            Zxx = mag_s1 + mag_s2
             # Zxx = Zxx**0.3
-            Zxx = np.transpose(Zxx, [1, 0])
+            # Zxx = mag_s1 + mag_s2
+            # Zxx = np.transpose(Zxx, [1, 0])
             sample = {
                 'frames_s1': frame_s1,
                 'frames_s2': frame_s2,
-                'audio_s1': self.power_law(np.asarray([real_s1, imag_s2]),0.3),
-                'audio_s2': self.power_law(np.asarray([real_s2, imag_s2]),0.3),
-                'audio_mix': self.power_law(np.asarray([np.real(Zxx), np.imag(Zxx)]),0.3),
+                'audio_s1': np.asarray([mag_s1]),
+                'audio_s2': np.asarray([mag_s2]),
+                'audio_mix': np.asarray([np.abs(Zxx)])
             }
             return sample
 
@@ -157,14 +208,6 @@ class DataReader(Dataset):
             print(e)
             print("Error")
             return self.__getitem__(np.random_intel.randint(0, self.__len__()))
-
-    def power_law(self, data,power=0.6):
-        mask = np.zeros(data.shape)
-        mask[data>=0] = 1
-        mask[data<0] = -1
-        data = np.power(np.abs(data),power)
-        data = data * mask
-        return data
 
     def return_all_vidoes_pathes(self, id):
         """
@@ -223,5 +266,5 @@ if __name__ == "__main__":
         print("Shape of s1 audio spectrogram: ", sample_batched["audio_s1"].shape)
         print("Shape of mix audio spectrogram: ", sample_batched["audio_mix"].shape)
         print("")
-        if i_batch == 3:
+        if i_batch == 1:
             break

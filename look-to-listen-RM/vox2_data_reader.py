@@ -56,6 +56,8 @@ class DataReader(Dataset):
         return self.length
 
     def get_single_data(self, idx):
+
+        np.random.seed(int(time.time()*100000)%100000)
         speaker_id = self.ids[idx]
 
         # get all video ids of this speaker
@@ -87,17 +89,17 @@ class DataReader(Dataset):
         else:
             acc = AudioSegment.from_file(audio_path_acc, "m4a")
             acc.export(audio_path_wav, format='wav')
-        print(audio_path_wav)
+        # print(audio_path_wav)
 
         if self.engine == "librosa":
             data, fs = librosa.load(audio_path_wav, sr=None)
-            # data = data / np.max(data)
+            data = data / np.max(data)
 
         # locate video
         video_id = video_ids[pick_video_idx]
 
         video_path = "%s/%s/%s/%s.mp4" % (self.video_prefix, speaker_id, video_id, audio_path_wav.split('/')[-1].split('.')[0])
-        print(video_path)
+        # print(video_path)
 
         vid = imageio.get_reader(video_path, 'ffmpeg')
 
@@ -131,25 +133,27 @@ class DataReader(Dataset):
         if self.engine == "librosa":
             # raw_data = self.power_law(raw_data,0.3)
             Zxx = librosa.core.stft(raw_data.astype(float), hop_length=10 * 16, n_fft=40 * 16)
-            # Zxx = Zxx**0.3
+            Zxx = Zxx**0.3
             Zxx = np.transpose(Zxx, [1, 0])
-            # mag = np.abs(Zxx)
-        return frames_seg, raw_data, np.real(Zxx), np.imag(Zxx)
+            # # mag = np.abs(Zxx)
+        return frames_seg, raw_data, np.abs(Zxx)
 
     def __getitem__(self, idx):
         try:
-            frame_s1, raw_data_s1, real_s1, imag_s1 = self.get_single_data(0)
-            frame_s2, raw_data_s2, real_s2, imag_s2 = self.get_single_data(1)
-            mix_raw_data = 0.5 * raw_data_s1 + 0.5 * raw_data_s2
-            Zxx = librosa.core.stft(mix_raw_data.astype(float), hop_length=10 * 16, n_fft=40 * 16)
+            frame_s1, raw_data_s1, mag_s1 = self.get_single_data(0)
+            frame_s2, raw_data_s2, mag_s2 = self.get_single_data(1)
+            # mix_raw_data = 0.5 * raw_data_s1 + 0.5 * raw_data_s2
+            # mix_raw_data =  raw_data_s1 +  raw_data_s2
+            # Zxx = librosa.core.stft(mix_raw_data.astype(float), hop_length=10 * 16, n_fft=40 * 16)
             # Zxx = Zxx**0.3
-            Zxx = np.transpose(Zxx, [1, 0])
+            Zxx = mag_s1 + mag_s2
+            # Zxx = np.transpose(Zxx, [1, 0])
             sample = {
                 'frames_s1': frame_s1,
                 'frames_s2': frame_s2,
-                'audio_s1': self.power_law(np.asarray([real_s1, imag_s2]),0.3),
-                'audio_s2': self.power_law(np.asarray([real_s2, imag_s2]),0.3),
-                'audio_mix': self.power_law(np.asarray([np.real(Zxx), np.imag(Zxx)]),0.3),
+                'audio_s1': np.asarray([mag_s1]), 
+                'audio_s2': np.asarray([mag_s2]),
+                'audio_mix': np.asarray([np.abs(Zxx)])
             }
             return sample
 

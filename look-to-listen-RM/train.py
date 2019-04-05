@@ -36,15 +36,18 @@ from net import avNet
 torch.backends.cudnn.benchmark = True
 
 
-def weights_init_kaiming(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        nn.init.kaiming_normal(m.weight.data, a=0, mode='fan_in')
-    elif classname.find('Linear') != -1:
-        nn.init.kaiming_normal(m.weight.data, a=0, mode='fan_in')
-    elif classname.find('BatchNorm') != -1:
-        m.weight.data.normal_(mean=0, std=math.sqrt(2. / 9. / 64.)).clamp_(-0.025, 0.025)
-        nn.init.constant(m.bias.data, 0.0)
+def weights_init_kaiming(model):
+    for m in model.modules():
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.constant_(m.weight, 1)
+            nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.Linear):
+            nn.init.normal_(m.weight, 0, 0.01)
+            nn.init.constant_(m.bias, 0)
 
 
 if __name__ == "__main__":
@@ -85,7 +88,7 @@ if __name__ == "__main__":
 
     device_0 = torch.device('cuda:0')
 
-    db_loader_train = DataLoader(db_train, batch_size=BATCH_SIZE, shuffle=True, num_workers=1, worker_init_fn=worker_init_fn)
+    db_loader_train = DataLoader(db_train, batch_size=BATCH_SIZE, shuffle=True, num_workers=8, worker_init_fn=worker_init_fn)
 
     # db_loader_test = DataLoader(db_test, batch_size=3, shuffle=True, num_workers=1, worker_init_fn=worker_init_fn)
     evl_sample = db_test[0]
@@ -95,18 +98,22 @@ if __name__ == "__main__":
     evl_audio_mix = torch.Tensor([evl_sample['audio_mix']]).float().to(device_0)
     evl_audio_s1 = torch.Tensor([evl_sample['audio_s1']]).float().to(device_0)
     evl_audio_s2 = torch.Tensor([evl_sample['audio_s2']]).float().to(device_0)
-    plt.imsave('audio_s1_real.png', evl_audio_s1[0, 0, :, :].cpu())
-    plt.imsave('audio_s1_imag.png', evl_audio_s1[0, 1, :, :].cpu())
-    plt.imsave('audio_s2_real.png', evl_audio_s2[0, 0, :, :].cpu())
-    plt.imsave('audio_s2_imag.png', evl_audio_s2[0, 1, :, :].cpu())
+    plt.imsave('audio_s1_mag.png', evl_audio_s1[0, 0, :, :].cpu())
+    plt.imsave('audio_s2_mag.png', evl_audio_s2[0, 0, :, :].cpu())
+    plt.imsave('audio_s1_mag_mr.png', (evl_audio_s1 / (evl_audio_mix + 0.00001))[0, 0, :, :].cpu(), vmin=0, vmax=1, cmap='gray')
+    plt.imsave('audio_s2_mag_mr.png', (evl_audio_s2 / (evl_audio_mix + 0.00001))[0, 0, :, :].cpu(), vmin=0, vmax=1, cmap='gray')
 
     # Define AV model
 
     model = avNet()
-    model.apply(weights_init_kaiming)
+    # model.apply(weights_init_kaiming)
+    weights_init_kaiming(model)
     model.to(device_0)
 
-    criterion = torch.nn.L1Loss()
+    # criterion = torch.nn.L1Loss()
+    criterion = torch.nn.MSELoss()
+    # criterion = torch.nn.BCELoss()
+    # criterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.003)
 
     start_epoch = 0
@@ -133,28 +140,24 @@ if __name__ == "__main__":
 
             out_s1, out_s2 = model(video_s1, video_s2, audio_mix)
 
-            loss = criterion(audio_mix*out_s1, audio_s1) + criterion(audio_mix*out_s2, audio_s2)
+            loss = criterion(out_s1 * audio_mix, audio_s1) + criterion(out_s2 * audio_mix, audio_s2)
             loss.backward()
             optimizer.step()
 
             # running_loss += loss.item()
             print('[%d, %d] loss: %.5f' % (epoch + 1, i_batch + 1, loss.item()))
             # running_loss = 0.0
-
+            # awefawef
             if i_batch % 10 == 0:
                 torch.save({'model': model.state_dict(), 'optimizer': optimizer.state_dict(), 'epoch': epoch}, "./ckpt")
                 model.eval()
                 evl_out_s1, evl_out_s2 = model(evl_frames_s1, evl_frames_s2, evl_audio_mix)
-                plt.imsave('evl_audio_s1_real_rm.png', (evl_out_s1[0, 0, :, :]).cpu().data.numpy(),cmap='gray',vmin=0,vmax=1)
-                plt.imsave('evl_audio_s1_imag_rm.png', (evl_out_s1[0, 1, :, :]).cpu().data.numpy(),cmap='gray',vmin=0,vmax=1)
-                plt.imsave('evl_audio_s2_real_rm.png', (evl_out_s2[0, 0, :, :]).cpu().data.numpy(),cmap='gray',vmin=0,vmax=1)
-                plt.imsave('evl_audio_s2_imag_rm.png', (evl_out_s2[0, 1, :, :]).cpu().data.numpy(),cmap='gray',vmin=0,vmax=1)
-                evl_out_s1 = (evl_audio_mix*evl_out_s1).cpu().data.numpy()
-                evl_out_s2 = (evl_audio_mix*evl_out_s2).cpu().data.numpy()
-                plt.imsave('evl_audio_s1_real.png', evl_out_s1[0, 0, :, :])
-                plt.imsave('evl_audio_s1_imag.png', evl_out_s1[0, 1, :, :])
-                plt.imsave('evl_audio_s2_real.png', evl_out_s2[0, 0, :, :])
-                plt.imsave('evl_audio_s2_imag.png', evl_out_s2[0, 1, :, :])
+                plt.imsave('evl_audio_s1_mag_rm.png', (torch.sigmoid(evl_out_s1)[0, 0, :, :]).cpu().data.numpy(), cmap='gray', vmin=0, vmax=1)
+                plt.imsave('evl_audio_s2_mag_rm.png', (torch.sigmoid(evl_out_s2)[0, 0, :, :]).cpu().data.numpy(), cmap='gray', vmin=0, vmax=1)
+                evl_out_s1 = (evl_audio_mix * evl_out_s1).cpu().data.numpy()
+                evl_out_s2 = (evl_audio_mix * evl_out_s2).cpu().data.numpy()
+                plt.imsave('evl_audio_s1_mag.png', evl_out_s1[0, 0, :, :])
+                plt.imsave('evl_audio_s2_mag.png', evl_out_s2[0, 0, :, :])
                 print('Evl error: %f' %
                       np.mean(np.square(evl_out_s1 - evl_audio_s1.cpu().data.numpy()) + np.mean(np.square(evl_out_s2 - evl_audio_s2.cpu().data.numpy()))))
                 model.train()

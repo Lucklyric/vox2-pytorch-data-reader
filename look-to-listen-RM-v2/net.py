@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torchvision.models as models
+import matplotlib.pyplot as plt
 
 # This net is for audio-stream #
 
@@ -19,7 +20,7 @@ class asNet(nn.Module):
 
         super(asNet, self).__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(in_channels=2, out_channels=96, kernel_size=(1, 7), dilation=(1, 1), padding=(0, 3)),
+            nn.Conv2d(in_channels=1, out_channels=96, kernel_size=(1, 7), dilation=(1, 1), padding=(0, 3)),
             nn.BatchNorm2d(96),
             nn.ReLU(True),
             nn.Conv2d(in_channels=96, out_channels=96, kernel_size=(7, 1), dilation=(1, 1), padding=(3, 0)),
@@ -61,7 +62,7 @@ class asNet(nn.Module):
             nn.Conv2d(in_channels=96, out_channels=96, kernel_size=(5, 5), dilation=32, padding=64),
             nn.BatchNorm2d(96),
             nn.ReLU(True),
-            nn.Conv2d(in_channels=96, out_channels=8, kernel_size=(5, 5), dilation=1, padding=2),
+            nn.Conv2d(in_channels=96, out_channels=8, kernel_size=(1, 1), dilation=1, padding=0),
             nn.BatchNorm2d(8),
             nn.ReLU(True),
         )
@@ -70,7 +71,7 @@ class asNet(nn.Module):
         out = self.net(x)    # [batch, 8, 297, 257]
 
         out = torch.transpose(out, 1, 2)    # [batch , 297, 8, 257]
-        out = torch.reshape(out, [-1, 297, 8 * 321])    # [bath, 297, 8*257]
+        out = torch.reshape(out, [-1, 294, 8 * 257])    # [bath, 297, 8*257]
 
         return out
 
@@ -107,7 +108,7 @@ class vsNet(nn.Module):
         out = self.net(x)    # [batch, 256, 297, 1]
 
         out = torch.transpose(out, 1, 2)    # [batch, 297, 256, 1]
-        out = torch.reshape(out, [-1, 297, 256])    # [batch, 297, 256]
+        out = torch.reshape(out, [-1, 294, 256])    # [batch, 297, 256]
 
         return out
 
@@ -117,19 +118,29 @@ class fuseNet(nn.Module):
     def __init__(self):
 
         super(fuseNet, self).__init__()
-        self.biLSTMLayer = nn.LSTM(256 * 2 + 8 * 321, hidden_size=200, num_layers=1, bidirectional=True, batch_first=True)
+        # self.biLSTMLayer = nn.LSTM(256 * 2 + 8 * 321, hidden_size=200, num_layers=1, bidirectional=True, batch_first=True)
+        self.biLSTMLayer = nn.LSTM(8 * 257, hidden_size=200, num_layers=1, bidirectional=True, batch_first=True)
+        # self.fc3 = nn.Sequential(
+        #     nn.Linear(400, 600), nn.ReLU(True), nn.Linear(600, 600), nn.ReLU(True), nn.Linear(600, 600), nn.ReLU(True), nn.Linear(600, 257 * 2 )
+        #     )
         self.fc3 = nn.Sequential(
-            nn.Linear(400, 600), nn.ReLU(True), nn.Linear(600, 600), nn.ReLU(True), nn.Linear(600, 600), nn.ReLU(True), nn.Linear(600, 321 * 2 * 2),
-            nn.Sigmoid())
+            nn.Linear(400, 600), nn.ReLU(True), nn.Linear(600, 257 * 2 )
+            )
 
         # self.fcMask1 = nn.Linear(600, 321 * 2 * 2)
         # self.fcMask2 = nn.Linear(600, 321 * 2)
 
     def forward(self, fuse_feature):
+        print(fuse_feature.shape)
+        plt.imsave("fuse_feature.png",fuse_feature[0].cpu().data.numpy());
+
         out, _ = self.biLSTMLayer(fuse_feature)    #[batch, 297, 800]
+        
+        print(out.shape)
+        plt.imsave("lstm_feature.png",out[0].cpu().data.numpy());
         out = self.fc3(out)
         # out = torch.sigmoid(self.fcMask1(out))
-        out = torch.reshape(out, [-1, 297, 321, 2, 2])    # [batch , 297, 321 ,2]
+        out = torch.reshape(out, [-1, 294, 257, 1, 2])    # [batch , 297, 321 ,2]
         out = torch.transpose(out, 1, 2)
         out = torch.transpose(out, 1, 3)
 
@@ -153,28 +164,30 @@ class avNet(nn.Module):
         self.fusenet = fuseNet()
 
     def forward(self, video_1, video_2, audio):
-        [batch, v_len, c, w, h] = video_1.shape
-        video_1 = torch.reshape(video_1, [batch * v_len, c, w, h])
-        video_2 = torch.reshape(video_2, [batch * v_len, c, w, h])
-
-        video_1_feature = self.modified_vgg(video_1)
-        video_1_feature = torch.reshape(video_1_feature, [batch, v_len, 1000])
-        video_1_feature = torch.unsqueeze(video_1_feature, -1)
-        video_1_feature = torch.transpose(video_1_feature, 1, 2)
-        video_1_feature = self.vsnet(video_1_feature)
-
-        video_2_feature = self.modified_vgg(video_2)
-        video_2_feature = torch.reshape(video_2_feature, [batch, v_len, 1000])
-        video_2_feature = torch.unsqueeze(video_2_feature, -1)
-        video_2_feature = torch.transpose(video_2_feature, 1, 2)
-        video_2_feature = self.vsnet(video_2_feature)
+        # [batch, v_len, c, w, h] = video_1.shape
+        # video_1 = torch.reshape(video_1, [batch * v_len, c, w, h])
+        # video_2 = torch.reshape(video_2, [batch * v_len, c, w, h])
+        #
+        # video_1_feature = self.modified_vgg(video_1)
+        # video_1_feature = torch.reshape(video_1_feature, [batch, v_len, 1000])
+        # video_1_feature = torch.unsqueeze(video_1_feature, -1)
+        # video_1_feature = torch.transpose(video_1_feature, 1, 2)
+        # video_1_feature = self.vsnet(video_1_feature)
+        #
+        # video_2_feature = self.modified_vgg(video_2)
+        # video_2_feature = torch.reshape(video_2_feature, [batch, v_len, 1000])
+        # video_2_feature = torch.unsqueeze(video_2_feature, -1)
+        # video_2_feature = torch.transpose(video_2_feature, 1, 2)
+        # video_2_feature = self.vsnet(video_2_feature)
 
         audio_feature = self.asnet(audio)
 
-        fuse_feature = torch.cat([audio_feature, video_1_feature, video_2_feature], dim=2)
+        # self.fuse_feature = torch.cat([audio_feature, video_1_feature, video_2_feature], dim=2)
+        self.fuse_feature = torch.cat([audio_feature], dim=2)
+
         # print(fuse_feature.shape)
 
-        out_s1, out_s2 = self.fusenet(fuse_feature)
+        out_s1, out_s2 = self.fusenet(self.fuse_feature)
         # print(out_s1.shape)
         return out_s1, out_s2
 
@@ -187,7 +200,7 @@ if __name__ == "__main__":
     # fake input
     test_video_1_input = torch.randn(3, 75, 1, 224, 224).to(device_0)
     test_video_2_input = torch.randn(3, 75, 1, 224, 224).to(device_0)
-    test_audio_input = torch.randn(3, 2, 297, 321).to(device_0)
+    test_audio_input = torch.randn(3, 1, 294, 257).to(device_0)
 
     # forward pass
     avnet = avNet().to(device_0)
