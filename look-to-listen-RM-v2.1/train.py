@@ -175,8 +175,8 @@ if __name__ == "__main__":
                 plt.imsave('evl_audio_s2_mag.png', evl_out_s2[0, 0, :, :])
                 # wav_1 = np.squeeze(evl_out_s1) * np.exp(1j )
                 # wav_2 = np.squeeze(evl_out_s2) * np.exp(1j )
-                wav_1 = np.squeeze(evl_out_s1) * np.exp(1j * evl_phase_mix[0])
-                wav_2 = np.squeeze(evl_out_s2) * np.exp(1j * evl_phase_mix[0])
+                wav_1 = np.squeeze(evl_out_s1**(1/0.3)) * np.exp(1j * evl_phase_mix[0])
+                wav_2 = np.squeeze(evl_out_s2**(1/0.3)) * np.exp(1j * evl_phase_mix[0])
                 wavfile.write("t1.wav",16000,fast_istft(wav_1))
                 wavfile.write("t2.wav",16000,fast_istft(wav_2))
 

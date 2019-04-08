@@ -121,7 +121,7 @@ class fuseNet(nn.Module):
         # self.biLSTMLayer = nn.LSTM(256 * 2 + 8 * 321, hidden_size=200, num_layers=1, bidirectional=True, batch_first=True)
         self.biLSTMLayer = nn.LSTM(8 * 257, hidden_size=400, num_layers=1, bidirectional=True, batch_first=True)
         self.fc3 = nn.Sequential(
-            nn.Linear(800, 600), nn.ReLU(True), nn.Linear(600, 600), nn.ReLU(True), nn.Linear(600, 257 * 2 ), nn.ReLU()
+            nn.Linear(800, 600), nn.ReLU(True), nn.Linear(600, 600), nn.ReLU(True), nn.Linear(600, 600), nn.ReLU(True), nn.Linear(600, 257 * 2 ), nn.ReLU()
             )
         # self.fc3 = nn.Sequential(
         #     nn.Linear(400, 600), nn.ReLU(True), nn.Linear(600, 257 * 2 )
@@ -139,7 +139,7 @@ class fuseNet(nn.Module):
 
         out, _ = self.biLSTMLayer(fuse_feature)    #[batch, 297, 800]
         
-        print(out.shape)
+        # print(out.shape)
         plt.imsave("lstm_feature.png",out[0].cpu().data.numpy());
         out = self.fc3(out)
         # out = torch.sigmoid(self.fcMask1(out))

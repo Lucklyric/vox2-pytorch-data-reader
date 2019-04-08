@@ -17,7 +17,6 @@
 
 from numpy import random_intel
 from pydub import AudioSegment
-from pydub import AudioSegment
 from skimage import io, transform, color
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
@@ -66,27 +65,50 @@ def fast_stft(data, power=False):
     return stft(data)
 
 
+def istft(F, fft_size=512, step_size=160, padding=True):
+    # inverse short time fourier transform
+    print(F.shape)
+    data = np.fft.irfft(F, axis=-1)
+    print(data.shape)
+    # padding hanning window 512-400 = 112
+    window = np.concatenate((np.zeros((56,)), np.hanning(fft_size - 112), np.zeros((56,))), axis=0)
+    number_windows = F.shape[0]
+    T = np.zeros((number_windows * step_size + fft_size))
+    for i in range(number_windows):
+        head = int(i * step_size)
+        tail = int(head + fft_size)
+        T[head:tail] = T[head:tail] + data[i, :] * window
+    if padding == True:
+        T = T[:48000]
+    return T
+
+
+def fast_istft(F, power=False, **kwargs):
+    # directly transform the frequency domain data to time domain data
+    # apply power law
+    T = istft(F)
+    if power:
+        T = power_law(T, (1.0 / 0.6))
+    return T
+
+
 class DataReader(Dataset):
 
-    def __init__(self, csv_meta, audio_prefix, video_prefix, random=False, engine="librosa", mode="train"):
+    def __init__(self, audio_path, random=False, engine="librosa", mode="train"):
 
         print("Init DataReader start")
-        self.meta_data = pd.read_csv(csv_meta)
-        self.meta_data = self.meta_data[self.meta_data["Set"].str.strip() == "dev"]
-        self.ids = self.meta_data["VoxCeleb2 ID"].str.strip().values
-        self.ids.sort()
+        self.files = glob.glob("%s/*.wav" % (audio_path))
+        self.files.sort()
+        print(len(self.files))
         self.mode = mode
-        print(self.ids.shape)
         if self.mode == "train":
-            self.range = [0, 1000]
+            self.range = [0, 450]
         else:
-            self.range = [1000, 1100]
+            self.range = [450, 460]
         # print(self.range[0],self.range[1])
 
-        self.ids = self.ids[self.range[0]:self.range[1]]
-        self.length = len(self.ids)
-        self.audio_prefix = audio_prefix
-        self.video_prefix = video_prefix
+        self.files = self.files[self.range[0]:self.range[1]]
+        self.length = len(self.files)
         self.random = random
         self.dur = int((1 / 25) * 16000)
         self.engine = engine
@@ -98,71 +120,14 @@ class DataReader(Dataset):
         return self.length
 
     def get_single_data(self, idx):
+        # np.random.seed(int(time.time() * 100000) % 100000)
+        audio_path_wav = self.files[idx]
 
-        np.random.seed(int(time.time() * 100000) % 100000)
-        speaker_id = self.ids[idx]
+        raw_data, fs = librosa.load(audio_path_wav, sr=16000)
+        Zxx = fast_stft(raw_data)
+        Zxx = Zxx**0.3
 
-        # get all video ids of this speaker
-        all_video_pathes, video_ids = self.return_all_vidoes_pathes(speaker_id)
-        num_videos = len(all_video_pathes)
-
-        pick_video_idx = 0
-        if self.random is True:
-            # pick a random video of this speaker
-            pick_video_idx = np.random.randint(0, num_videos)
-
-        # get all video clips of selected video
-        all_audio_clips = glob.glob(all_video_pathes[pick_video_idx] + "/*.m4a")
-        all_audio_clips.sort()
-        num_audio_clips = len(all_audio_clips)
-
-        pick_clip_idx = 0
-        if self.random is True:
-            # pick a random video clip
-            pick_clip_idx = np.random.randint(0, num_audio_clips)
-
-        # convert acc to wav
-        audio_path_acc = all_audio_clips[pick_clip_idx]
-        audio_path_wav = all_audio_clips[pick_clip_idx] + ".wav"
-        if os.path.exists(audio_path_wav):
-            pass
-        else:
-            acc = AudioSegment.from_file(audio_path_acc, "m4a")
-            acc.export(audio_path_wav, format='wav')
-        # print(audio_path_wav)
-
-        if self.engine == "librosa":
-            data, fs = librosa.load(audio_path_wav, sr=16000)
-
-        # 3s segment
-        len_seg = 3
-
-        start_idx = 0
-
-        if self.random is True:
-            # pick random segments
-            start_idx = np.random.randint(0, len(data)-3*16000-1)
-
-
-        raw_data = data[start_idx:(start_idx + 3 * 16000)]
-        raw_data = raw_data / np.max(raw_data)
-        # if len(raw_data) != 47360:
-        #     print(data.shape)
-        #     print(start_idx)
-        #     print(vid.get_length())
-        #     print(raw_data.shape)
-        #     print(dur)
-
-        if self.engine == "librosa":
-            # raw_data = self.power_law(raw_data,0.3)
-            Zxx = librosa.core.stft(raw_data.astype(float), hop_length=10 * 16, n_fft=512)
-            # Zxx = fast_stft(raw_data)
-            # Zxx = Zxx**0.3
-            Zxx = np.transpose(Zxx, [1, 0])
-            mag = np.abs(Zxx)
-            mag = mag**0.3
-
-        return raw_data, mag
+        return raw_data, np.abs(Zxx)
 
     def __getitem__(self, idx):
         try:
@@ -172,18 +137,15 @@ class DataReader(Dataset):
                 ss = [0, 1]
             raw_data_s1, mag_s1 = self.get_single_data(ss[0])
             raw_data_s2, mag_s2 = self.get_single_data(ss[1])
-            # mix_raw_data = 0.5 * raw_data_s1 + 0.5 * raw_data_s2
-            # mix_raw_data =  raw_data_s1 +  raw_data_s2
-            # Zxx = librosa.core.stft(mix_raw_data.astype(float), hop_length=10 * 16, n_fft=512)
-            # Zxx = fast_stft(mix_raw_data)
-            Zxx = mag_s1 + mag_s2
-            # Zxx = Zxx**0.3
-            # Zxx = mag_s1 + mag_s2
-            # Zxx = np.transpose(Zxx, [1, 0])
+            mix_raw_data = raw_data_s1 + raw_data_s2
+            Zxx = fast_stft(mix_raw_data)
+            phase = np.angle(Zxx)
+            Zxx = Zxx**0.3
             sample = {
                 'audio_s1': np.asarray([mag_s1]),
                 'audio_s2': np.asarray([mag_s2]),
-                'audio_mix': np.asarray([np.abs(Zxx)])
+                'audio_mix': np.asarray([np.abs(Zxx)]),
+                'phase_mix': np.asarray([phase])
             }
             return sample
 
@@ -204,9 +166,7 @@ class DataReader(Dataset):
 
 if __name__ == "__main__":
     # CSV_META = "/mnt/hdd1/alvinsun/AV/vox2/vox2_meta.csv"
-    CSV_META = "/mnt/hdd1/alvinsun/AV/vox2/vox2_meta.csv"    # "test with modified small scale meta csv"
-    VIDEO_PREFIX = "/mnt/hdd1/alvinsun/AV/vox2/vox2_dev_mp4/dev/mp4/"    # "change to your own local path"
-    AUDIO_PREFIX = "/mnt/hdd1/alvinsun/AV/vox2/vox2_aac/dev/aac/"    # "change to your own local path"
+    AUDIO_PATH = "/mnt/hdd1/alvinsun/AV/speech_separation/data/audio/norm_audio_train/"    # "change to your own local path"
     BATCH_SIZE = 4
     SEED = 2019
 
@@ -219,9 +179,7 @@ if __name__ == "__main__":
         return
 
     db = DataReader(
-        csv_meta=CSV_META,
-        audio_prefix=AUDIO_PREFIX,
-        video_prefix=VIDEO_PREFIX,
+        audio_path=AUDIO_PATH,
         random=True,
         engine="librosa",
         mode="train",
@@ -231,9 +189,8 @@ if __name__ == "__main__":
     print("Test signle output:")
     test_single_input = db[0]
 
-    # print("Shape of s1 video frames: ", test_single_input["frames_s1"].shape)
-    # print("Shape of s2 video frames: ", test_single_input["frames_s2"].shape)
     print("Shape of s1 audio spectrogram: ", test_single_input["audio_s1"].shape)
+    print("Shape of s2 audio spectrogram: ", test_single_input["audio_s2"].shape)
     print("Shape of mix audio spectrogram: ", test_single_input["audio_mix"].shape)
     # print("Shape of raw audio wave: ", test_single_input[""].shape)
 
@@ -244,8 +201,6 @@ if __name__ == "__main__":
 
     for i_batch, sample_batched in enumerate(db_loader):
         print("num_batch %d" % i_batch)
-        # print("Shape of s1 video frames: ", sample_batched["frames_s1"].shape)
-        # print("Shape of s2 video frames: ", sample_batched["frames_s2"].shape)
         print("Shape of s1 audio spectrogram: ", sample_batched["audio_s1"].shape)
         print("Shape of mix audio spectrogram: ", sample_batched["audio_mix"].shape)
         print("")

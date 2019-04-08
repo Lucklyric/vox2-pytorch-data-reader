@@ -65,10 +65,36 @@ def fast_stft(data, power=False):
         data = power_law(data)
     return stft(data)
 
+def istft(F, fft_size=512, step_size=160, padding=True):
+    # inverse short time fourier transform
+    print(F.shape)
+    data = np.fft.irfft(F, axis=-1)
+    print(data.shape)
+    # padding hanning window 512-400 = 112
+    window = np.concatenate((np.zeros((56,)), np.hanning(fft_size - 112), np.zeros((56,))), axis=0)
+    number_windows = F.shape[0]
+    T = np.zeros((number_windows * step_size + fft_size))
+    for i in range(number_windows):
+        head = int(i * step_size)
+        tail = int(head + fft_size)
+        T[head:tail] = T[head:tail] + data[i, :] * window
+    if padding == True:
+        T = T[:48000]
+    return T
+
+
+def fast_istft(F, power=False, **kwargs):
+    # directly transform the frequency domain data to time domain data
+    # apply power law
+    T = istft(F)
+    if power:
+        T = power_law(T, (1.0 / 0.6))
+    return T
+
 
 class DataReader(Dataset):
 
-    def __init__(self, csv_meta, audio_prefix, video_prefix, random=False, engine="librosa", mode="train"):
+    def __init__(self, csv_meta, audio_prefix, random=False, engine="librosa", mode="train"):
 
         print("Init DataReader start")
         self.meta_data = pd.read_csv(csv_meta)
@@ -86,7 +112,6 @@ class DataReader(Dataset):
         self.ids = self.ids[self.range[0]:self.range[1]]
         self.length = len(self.ids)
         self.audio_prefix = audio_prefix
-        self.video_prefix = video_prefix
         self.random = random
         self.dur = int((1 / 25) * 16000)
         self.engine = engine
@@ -155,14 +180,14 @@ class DataReader(Dataset):
 
         if self.engine == "librosa":
             # raw_data = self.power_law(raw_data,0.3)
-            Zxx = librosa.core.stft(raw_data.astype(float), hop_length=10 * 16, n_fft=512)
-            # Zxx = fast_stft(raw_data)
+            # Zxx = librosa.core.stft(raw_data.astype(float), hop_length=10 * 16, n_fft=512)
+            Zxx = fast_stft(raw_data)
             # Zxx = Zxx**0.3
-            Zxx = np.transpose(Zxx, [1, 0])
-            mag = np.abs(Zxx)
-            mag = mag**0.3
+            # Zxx = np.transpose(Zxx, [1, 0])
+            # mag = np.abs(Zxx)
+            # mag = mag**0.3
 
-        return raw_data, mag
+        return raw_data, Zxx 
 
     def __getitem__(self, idx):
         try:
@@ -170,20 +195,23 @@ class DataReader(Dataset):
                 ss = np.random.randint(0, self.length, 2)
             else:
                 ss = [0, 1]
-            raw_data_s1, mag_s1 = self.get_single_data(ss[0])
-            raw_data_s2, mag_s2 = self.get_single_data(ss[1])
+            # print(ss)
+            raw_data_s1, Zxx_s1 = self.get_single_data(ss[0])
+            raw_data_s2, Zxx_s2 = self.get_single_data(ss[1])
             # mix_raw_data = 0.5 * raw_data_s1 + 0.5 * raw_data_s2
             # mix_raw_data =  raw_data_s1 +  raw_data_s2
             # Zxx = librosa.core.stft(mix_raw_data.astype(float), hop_length=10 * 16, n_fft=512)
             # Zxx = fast_stft(mix_raw_data)
-            Zxx = mag_s1 + mag_s2
+            Zxx = Zxx_s1 + Zxx_s2
+            mag = np.abs(Zxx)
             # Zxx = Zxx**0.3
             # Zxx = mag_s1 + mag_s2
             # Zxx = np.transpose(Zxx, [1, 0])
             sample = {
-                'audio_s1': np.asarray([mag_s1]),
-                'audio_s2': np.asarray([mag_s2]),
-                'audio_mix': np.asarray([np.abs(Zxx)])
+                'audio_s1': np.asarray([np.real(Zxx_s1)**0.3]),
+                'audio_s2': np.asarray([np.abs(Zxx_s2)**0.3]),
+                'audio_mix': np.asarray([np.abs(Zxx)**0.3]),
+                'phase_mix': np.asarray([np.angle(Zxx)])
             }
             return sample
 
