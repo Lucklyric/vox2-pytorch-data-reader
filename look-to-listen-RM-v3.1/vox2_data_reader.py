@@ -165,6 +165,7 @@ class DataReader(Dataset):
         len_seg = 3
 
         start_idx = 0
+        
 
         if self.random is True:
             # pick random segments
@@ -173,6 +174,8 @@ class DataReader(Dataset):
         raw_data = data[start_idx:(start_idx + 3 * 16000)]
         raw_data = raw_data / np.max(raw_data)
 
+        # print(speaker_id, pick_video_idx, pick_clip_idx, start_idx )
+
         return raw_data
 
     def __getitem__(self, idx):
@@ -180,7 +183,7 @@ class DataReader(Dataset):
             if self.random is True:
                 ss = np.random.randint(0, self.length, 2)
             else:
-                ss = [0, 1]
+                ss = [0, 10]
             # print(ss)
             raw_data_s1 = self.get_single_data(ss[0])
             raw_data_s2 = self.get_single_data(ss[1])

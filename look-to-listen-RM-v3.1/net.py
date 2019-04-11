@@ -10,6 +10,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 import torchvision.models as models
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 # This net is for audio-stream #
 
@@ -23,41 +24,41 @@ class asNet(nn.Module):
             # cnn1
             nn.ZeroPad2d((3, 3, 0, 0)),
             nn.Conv2d(1, 64, kernel_size=(1, 7), dilation=(1, 1)),
-            nn.BatchNorm2d(64), nn.ReLU(),
+            nn.BatchNorm2d(64), nn.PReLU(),
 
             # cnn2
             nn.ZeroPad2d((0, 0, 3, 3)),
             nn.Conv2d(64, 64, kernel_size=(7, 1), dilation=(1, 1)),
-            nn.BatchNorm2d(64), nn.ReLU(),
+            nn.BatchNorm2d(64), nn.PReLU(),
 
             # cnn3
             nn.ZeroPad2d(2),
             nn.Conv2d(64, 64, kernel_size=(5, 5), dilation=(1, 1)),
-            nn.BatchNorm2d(64), nn.ReLU(),
+            nn.BatchNorm2d(64), nn.PReLU(),
 
             # cnn4
             nn.ZeroPad2d((2, 2, 4, 4)),
             nn.Conv2d(64, 64, kernel_size=(5, 5), dilation=(2, 1)), # (9, 5)
-            nn.BatchNorm2d(64), nn.ReLU(),
+            nn.BatchNorm2d(64), nn.PReLU(),
 
             # cnn5
             nn.ZeroPad2d((2, 2, 8, 8)),
             nn.Conv2d(64, 64, kernel_size=(5, 5), dilation=(4, 1)), # (17, 5)
-            nn.BatchNorm2d(64), nn.ReLU(),
+            nn.BatchNorm2d(64), nn.PReLU(),
 
             # cnn6
             nn.ZeroPad2d((2, 2, 16, 16)),
             nn.Conv2d(64, 64, kernel_size=(5, 5), dilation=(8, 1)), # (33, 5)
-            nn.BatchNorm2d(64), nn.ReLU(),
+            nn.BatchNorm2d(64), nn.PReLU(),
 
             # cnn7
             nn.ZeroPad2d((2, 2, 32, 32)),
             nn.Conv2d(64, 64, kernel_size=(5, 5), dilation=(16, 1)), # (65, 5)
-            nn.BatchNorm2d(64), nn.ReLU(),
+            nn.BatchNorm2d(64), nn.PReLU(),
 
             # cnn8
             nn.Conv2d(64, 8, kernel_size=(1, 1), dilation=(1, 1)), 
-            nn.BatchNorm2d(8), nn.ReLU(),
+            nn.BatchNorm2d(8), nn.PReLU(),
         )
 
         # self.net = nn.Sequential(
@@ -126,22 +127,22 @@ class vsNet(nn.Module):
         self.net = nn.Sequential(
             nn.Conv2d(in_channels=1000, out_channels=256, kernel_size=(7, 1), dilation=(1, 1), padding=(3, 0)),
             nn.BatchNorm2d(256),
-            nn.ReLU(True),
+            nn.PReLU(True),
             nn.Conv2d(256, 256, kernel_size=(5, 1), stride=1, padding=(2, 0), bias=False, dilation=(1, 1)),
             nn.BatchNorm2d(256),
-            nn.ReLU(True),
+            nn.PReLU(True),
             nn.Conv2d(256, 256, kernel_size=(5, 1), stride=1, padding=(4, 0), bias=False, dilation=(2, 1)),
             nn.BatchNorm2d(256),
-            nn.ReLU(True),
+            nn.PReLU(True),
             nn.Conv2d(256, 256, kernel_size=(5, 1), stride=1, padding=(8, 0), bias=False, dilation=(4, 1)),
             nn.BatchNorm2d(256),
-            nn.ReLU(True),
+            nn.PReLU(True),
             nn.Conv2d(256, 256, kernel_size=(5, 1), stride=1, padding=(16, 0), bias=False, dilation=(8, 1)),
             nn.BatchNorm2d(256),
-            nn.ReLU(True),
+            nn.PReLU(True),
             nn.Conv2d(256, 256, kernel_size=(5, 1), stride=1, padding=(32, 0), bias=False, dilation=(16, 1)),
             nn.BatchNorm2d(256),
-            nn.ReLU(True),
+            nn.PReLU(True),
             nn.UpsamplingNearest2d((297, 1)),
         )
 
@@ -162,7 +163,7 @@ class fuseNet(nn.Module):
         # self.biLSTMLayer = nn.LSTM(256 * 2 + 8 * 321, hidden_size=200, num_layers=1, bidirectional=True, batch_first=True)
         self.biLSTMLayer = nn.LSTM(8 * 257, hidden_size=400, num_layers=1, bidirectional=True, batch_first=True)
         self.fc3 = nn.Sequential(
-            nn.Linear(800, 600), nn.ReLU(True), nn.Linear(600, 600), nn.ReLU(True), nn.Linear(600, 257 * 2 ), nn.Sigmoid()
+            nn.Linear(800, 600), nn.PReLU(), nn.Linear(600, 600), nn.PReLU(), nn.Linear(600, 257 * 2 )
             )
         # self.fc3 = nn.Sequential(
         #     nn.Linear(400, 600), nn.ReLU(True), nn.Linear(600, 257 * 2 )
@@ -179,7 +180,7 @@ class fuseNet(nn.Module):
         plt.imsave("fuse_feature.png",fuse_feature[0].cpu().data.numpy());
 
         out, _ = self.biLSTMLayer(fuse_feature)    #[batch, 297, 800]
-        
+        # out = F.prelu(out,800)
         # print(out.shape)
         plt.imsave("lstm_feature.png",out[0].cpu().data.numpy());
         out = self.fc3(out)

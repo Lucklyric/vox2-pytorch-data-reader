@@ -34,8 +34,9 @@ import matplotlib.pyplot as plt
 from vox2_data_reader import DataReader, fast_istft
 from net import avNet
 import scipy.io.wavfile as wavfile
+from tensorboardX import SummaryWriter
 
-# torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.benchmark = True
 
 
 def weights_init_kaiming(model):
@@ -54,13 +55,17 @@ def weights_init_kaiming(model):
 
 def audio_loss(S1_pred, S1_true, S2_pred, S2_true, gamma=0.1):
     loss_A = (S1_true - S1_pred)**2 + (S2_true - S2_pred)**2
-    loss_A = torch.mean(loss_A)
+    loss_A = torch.mean(torch.sum(loss_A, [1, 3]), 1)
     loss_B = (S2_true - S1_pred)**2 + (S1_true - S2_pred)**2
-    loss_B = torch.mean(loss_B)
-    if loss_A > loss_B:
-        return loss_B    #- gamma*torch.mean((S1_true - S1_pred)**2 + (S2_true - S2_pred)**2)
-    else:
-        return loss_A    #- gamma*torch.mean((S2_true - S1_pred)**2 + (S1_true - S2_pred)**2)
+    loss_B = torch.mean(torch.sum(loss_B, [1, 3]), 1)
+    idx = (loss_A > loss_B).float()
+    loss = torch.mean(idx * (loss_B) + (1 - idx) * loss_A)
+    return loss
+    # loss_B = torch.mean(loss_B)
+    # if loss_A > loss_B:
+    #     return loss_B    #- gamma*torch.mean((S1_true - S1_pred)**2 + (S2_true - S2_pred)**2)
+    # else:
+    #     return loss_A    #- gamma*torch.mean((S2_true - S1_pred)**2 + (S1_true - S2_pred)**2)
 
 
 if __name__ == "__main__":
@@ -70,6 +75,10 @@ if __name__ == "__main__":
     AUDIO_PATH = "/mnt/hdd1/alvinsun/AV/speech_separation/data/audio/norm_audio_train/"    # "change to your own local path"
     BATCH_SIZE = 6
     SEED = 2019
+    
+    if not os.path.exists('log'):
+        os.makedirs('log')
+    writer = SummaryWriter('log/t1')
 
     np.random.seed(SEED)
 
@@ -129,7 +138,7 @@ if __name__ == "__main__":
     # criterion = torch.nn.MSELoss()
     # criterion = torch.nn.BCELoss()
     # criterion = torch.nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.003)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.00005)
 
     start_epoch = 0
     # model = nn.DataParallel(model)
@@ -142,6 +151,8 @@ if __name__ == "__main__":
         model.load_state_dict(ckpt['model'])
         optimizer.load_state_dict(ckpt['optimizer'])
         start_epoch = ckpt['epoch']
+    for pg in optimizer.param_groups:
+        pg['lr'] = 0.00005
 
     # Train loops
     model.train()
@@ -169,9 +180,12 @@ if __name__ == "__main__":
             # running_loss = 0.0
             # awefawef
             if i_batch % 10 == 0:
+                writer.add_scalar('loss',loss.item(),i_batch+epoch*(len(db_loader_train)//BATCH_SIZE))
                 torch.save({'model': model.state_dict(), 'optimizer': optimizer.state_dict(), 'epoch': epoch}, "./ckpt")
                 model.eval()
                 evl_out_s1, evl_out_s2 = model(evl_audio_mix)
+                # plt.imsave('evl_audio_s1_mag_rm.png', ((evl_out_s1)[0, 0, :, :]).cpu().data.numpy(), cmap='gray', vmin=0, vmax=1)
+                # plt.imsave('evl_audio_s2_mag_rm.png', ((evl_out_s2)[0, 0, :, :]).cpu().data.numpy(), cmap='gray', vmin=0, vmax=1)
                 plt.imsave('evl_audio_s1_mag_rm.png', ((evl_out_s1)[0, 0, :, :]).cpu().data.numpy(), cmap='gray', vmin=0, vmax=1)
                 plt.imsave('evl_audio_s2_mag_rm.png', ((evl_out_s2)[0, 0, :, :]).cpu().data.numpy(), cmap='gray', vmin=0, vmax=1)
                 evl_out_s1 = ((evl_audio_mix * evl_out_s1).cpu().data.numpy()).copy()
